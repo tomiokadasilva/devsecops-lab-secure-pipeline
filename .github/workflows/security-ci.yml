@@ -7,6 +7,11 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  security-events: write  # necessário para upload de SARIF
+  contents: read          # necessário para checkout
+  actions: read           # opcional, mas bom ter    
+
 jobs:
   security-scan:
     name: Run SAST, SCA, and DAST
@@ -16,7 +21,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-       # =============== SAST: Semgrep ===============
+    # =============== SAST: Semgrep ===============
       - name: Run Semgrep SAST
         id: semgrep
         uses: returntocorp/semgrep-action@v1
@@ -26,17 +31,22 @@ jobs:
           generate-sarif: true
         continue-on-error: true
 
-      - name: Ensure SARIF file exists (create empty if needed)
+      - name: Ensure valid SARIF file exists
         run: |
           if [ ! -f semgrep-report.sarif ]; then
-            echo '{"version":"2.1.0","runs":[]}' > semgrep-report.sarif
-            echo "⚠️ No Semgrep findings — created empty SARIF."
+            echo '{"$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","version":"2.1.0","runs":[{"tool":{"driver":{"name":"Semgrep","informationUri":"https://semgrep.dev","version":"0.0.0"}},"results":[]}]}' > semgrep-report.sarif
+            echo "⚠️ Created empty but valid SARIF file."
+          else
+            # Valida se é JSON válido
+            python3 -m json.tool semgrep-report.sarif >/dev/null || (echo "❌ Invalid SARIF JSON"; exit 1)
           fi
 
       - name: Upload Semgrep SARIF report
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4  # ← v4 aqui!
         with:
           sarif_file: semgrep-report.sarif
+          category: semgrep-security-audit
+        if: always()
 
       # =============== SCA: Trivy ===============
       - name: Run Trivy vulnerability scanner (SCA)
