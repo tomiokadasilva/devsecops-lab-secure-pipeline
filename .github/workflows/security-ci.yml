@@ -1,0 +1,94 @@
+# .github/workflows/security-ci.yml
+name: Secure Pipeline CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  security-scan:
+    name: Run SAST, SCA, and DAST
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # =============== SAST: Semgrep ===============
+      - name: Run Semgrep SAST
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: p/security-audit
+          output: semgrep-report.sarif
+        continue-on-error: true
+
+      - name: Upload Semgrep SARIF report
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep-report.sarif
+        if: always()
+
+      # =============== SCA: Trivy ===============
+      - name: Run Trivy vulnerability scanner (SCA)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          ignore-unfixed: true
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
+      # =============== Build & Run App in Docker ===============
+      - name: Build vulnerable app Docker image
+        run: docker build -t vulnerable-app ./app
+
+      - name: Run app container in background
+        run: |
+          docker run -d --name test-app -p 8080:8080 vulnerable-app
+          # Espera a app subir
+          sleep 5
+          curl -f http://localhost:8080/health || exit 1
+
+      # =============== DAST: OWASP ZAP Baseline ===============
+      - name: Run OWASP ZAP Baseline Scan
+        run: |
+          docker run --network host \
+            -v $(pwd):/zap/wrk/:rw \
+            owasp/zap2docker-stable zap-baseline.py \
+            -t http://localhost:8080 \
+            -r zap-report.html \
+            -x zap-report.xml \
+            --autooff
+
+      - name: Upload ZAP HTML Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report-html
+          path: zap-report.html
+        if: always()
+
+      - name: Check for HIGH/CRITICAL in ZAP XML report
+        run: |
+          # Extrai número de alertas HIGH ou CRITICAL
+          HIGH_COUNT=$(xmllint --xpath "count(//alert/riskcode[text()='2'])" zap-report.xml 2>/dev/null || echo 0)
+          CRITICAL_COUNT=$(xmllint --xpath "count(//alert/riskcode[text()='3'])" zap-report.xml 2>/dev/null || echo 0)
+          
+          echo "High-risk alerts: $HIGH_COUNT"
+          echo "Critical-risk alerts: $CRITICAL_COUNT"
+          
+          if [ "$HIGH_COUNT" -gt 0 ] || [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "❌ DAST found high or critical issues. Failing pipeline."
+            exit 1
+          else
+            echo "✅ No high/critical DAST issues found."
+          fi
+
+      # =============== Cleanup ===============
+      - name: Stop and remove app container
+        if: always()
+        run: |
+          docker stop test-app || true
+          docker rm test-app || true
