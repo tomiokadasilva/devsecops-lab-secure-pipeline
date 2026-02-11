@@ -81,18 +81,20 @@ jobs:
           cmd_options: '-a --autooff'
         continue-on-error: true
     
-      - name: Verify and expose SARIF report path
-        id: verify_sarif
+      - name: Locate ZAP SARIF report
+        id: locate_zap_sarif
         run: |
-            REPORT="zap-results.sarif"
-            if [ ! -f "$REPORT" ]; then
-                echo "❌ Expected SARIF report not found: $REPORT"
+            REPORT=$(find . -maxdepth 1 -type f -name "report_*.sarif" | head -n1)
+            
+            if [ -z "$REPORT" ]; then
+                echo "❌ No ZAP SARIF report found."
                 echo "Available files:"
-                ls -la *.sarif 2>/dev/null || echo "No .sarif files found."
+                ls -la *.sarif 2>/dev/null || echo "No .sarif files in workspace."
                 exit 1
             fi
-            echo "report_path=$REPORT" >> "$GITHUB_OUTPUT"
 
+            echo "Found ZAP SARIF report: $REPORT"
+            echo "report_path=$REPORT" >> "$GITHUB_OUTPUT"
 
       # =============== Verificar HIGH/CRITICAL no relatório ===============
       - name: Check for HIGH/CRITICAL issues in SARIF
