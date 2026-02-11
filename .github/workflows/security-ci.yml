@@ -70,27 +70,27 @@ jobs:
           sleep 5
           curl -f http://localhost:8080/health || exit 1
 
-      # =============== DAST: OWASP ZAP Baseline ===============
+      # =============== DAST: OWASP ZAP Baseline (oficial) ===============
       - name: Run OWASP ZAP Baseline Scan
+        id: zap_scan
         uses: zaproxy/action-baseline@v0.15.0
         with:
           target: 'http://localhost:8080'
-          rules_file_name: '.zap/rules.tsv'
           format: 'md'
           output_file: 'zap-report.md'
-          cmd_options: '-a --autooff'        
-        continue-on-error: true 
+          cmd_options: '-a --autooff'
+        continue-on-error: true
 
-      # =============== Verify HIGH/CRITICAL in report ===============
+      # =============== Verificar HIGH/CRITICAL no relatório ===============
       - name: Check for HIGH/CRITICAL alerts in ZAP report
         run: |
-          REPORT="report.md"
+          REPORT="${{ steps.zap_scan.outputs.reportFile }}"
           if [ ! -f "$REPORT" ]; then
-            echo "❌ ZAP report not found!"
+            echo "❌ ZAP report not found at expected path: $REPORT"
+            ls -la  # debug
             exit 1
           fi
 
-          # Conta alertas com risco HIGH (2) ou CRITICAL (3)
           HIGH_COUNT=$(grep -c "Risk: High" "$REPORT" || true)
           CRITICAL_COUNT=$(grep -c "Risk: Critical" "$REPORT" || true)
 
